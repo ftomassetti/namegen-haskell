@@ -7,25 +7,40 @@ import Data.Maybe
 
 mypath = "../namegen-data/personnames/Italian_male.txt"
 
+-- An element preceeding the current getChar
+-- either a char or NameStart
+data NamePred = PredChar Char | NameStart
+                deriving (Show, Ord, Eq)
+
+-- The state we consider to choose the next letter:
+-- the last two preceeding elements
+type NameState = (NamePred, NamePred)
+
+-- An element following the current getChar
+-- either a char or NameEnd
 data Prosecution = NextChar Char | NameEnd
                    deriving (Show, Ord, Eq)
 
-data Language = Language { firstLetter :: M.Map Char Float, transitions :: TransitionMap }
+data Language = Language { transitions :: TransitionMap }
                 deriving Show
 
-type TransitionMap = M.Map Char (M.Map Prosecution Float)
-type TransitionMapInt = M.Map Char (M.Map Prosecution Int)
+type TransitionMap    = M.Map NameState (M.Map Prosecution Float)
+type TransitionMapInt = M.Map NameState (M.Map Prosecution Int)
 
-countTransitionsLetter :: TransitionMapInt -> (Char, Prosecution) -> TransitionMapInt
+-- Increment by one the counter of the given transition
+countTransitionsLetter :: TransitionMapInt -> (NameState, Prosecution) -> TransitionMapInt
 countTransitionsLetter tm (orig, dst) = M.insertWith (\_ subMap ->M.insertWith (+) dst 1 subMap) orig (M.singleton dst 1) tm
 
-transition :: String -> Int -> (Char, Prosecution)
-transition name index = let orig = name !! (pred index)
+predAt :: String -> Int -> NamePred
+predAt name index = if index<0 then NameStart else PredChar (name !! index)
+
+transition :: String -> Int -> (NameState, Prosecution)
+transition name index = let orig = (predAt name (index-2), predAt name (index-1))
                             dst = if index<(length name) then NextChar (name !! index) else NameEnd
                         in (orig, dst)
 
 countTransitionsName :: TransitionMapInt -> String -> TransitionMapInt 
-countTransitionsName tm name = let transitions = L.map (\i -> transition name i) [1..(length name)]
+countTransitionsName tm name = let transitions = L.map (\i -> transition name i) [0..(length name)]
                                    tm' = foldl countTransitionsLetter tm transitions
                                in tm'
 
@@ -38,40 +53,31 @@ convertTm :: TransitionMapInt -> TransitionMap
 convertTm iTm = M.map convertSubTm iTm
 
 fromSamples :: [String] -> Language
-fromSamples samples = let initials = map (!! 0) samples
-                          freqInitials = map (\g -> (head g, length g)) $ L.group . L.sort $ initials
-                          l = length samples
-                          probInitials = L.map (\(letter, freq) -> (letter, (fromIntegral freq) / (fromIntegral l))) freqInitials
-                          probInitials' = M.fromList probInitials
-                          -- first we count the frequency of each letter
+fromSamples samples = let -- first we count the frequency of each letter
                           transitionMap = foldl countTransitionsName M.empty samples
                           transitionMap' = convertTm transitionMap
-                       in Language probInitials' transitionMap'
+                       in Language transitionMap'
 
 loadSamples :: FilePath -> IO [String]
 loadSamples path = do content <- readFile path 
                       let ls = lines content
                       return ls
 
-getInitial :: Float -> Language -> Char
-getInitial f l = helper f (M.toAscList (firstLetter l))
-                 where helper f [] = error "?"
-                       helper f ((k,v):as) = if v>f then k else helper (f-v) as
-
-getProsecution :: Float -> Char -> Language -> Prosecution
-getProsecution f currChar l = helper f (M.toAscList transitionMap)
-                              where transitionMap = fromJust (M.lookup currChar (transitions l))
+getProsecution :: Float -> NameState -> Language -> Prosecution
+getProsecution f currState l = helper f (M.toAscList transitionMap)
+                              where transitionMap = fromMaybe (error $ "Cannot find entry for state "++(show currState)) (M.lookup currState (transitions l))
                                     helper f [] = error "?"
                                     helper f ((k,v):as) = if v>=f then k else helper (f-v) as
 
-generateName' :: [Float] -> Char -> Language -> String
-generateName' rseq currChar l = case prosecution of
+generateName' :: [Float] -> NameState -> Language -> String
+generateName' rseq currState l = case prosecution of
                                   NameEnd -> []
-                                  NextChar c -> c:(generateName' (tail rseq) c l)
-                                where prosecution = getProsecution (head rseq) currChar l
+                                  NextChar c -> let (s1,s2) = currState
+                                                    nextState = (s2,PredChar c)
+                                                in c:(generateName' (tail rseq) nextState l)
+                                where prosecution = getProsecution (head rseq) currState l
 
 generateName :: Language -> Int -> String
-generateName l seed = initial:(generateName' (tail rseq) initial l)
+generateName l seed = generateName' (tail rseq) (NameStart,NameStart) l
                       where rg = mkStdGen seed
                             rseq = randomRs (0.0,1.0) rg
-                            initial = getInitial (head rseq) l
