@@ -1,11 +1,13 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
+module Namegen where
+
 import qualified Data.Map.Strict as M
 import qualified Data.List as L
 import System.Random
 import Data.Maybe
 
-mypath = "../namegen-data/personnames/Italian_male.txt"
+--mypath = "../namegen-data/personnames/Italian_male.txt"
 
 -- An element preceeding the current getChar
 -- either a char or NameStart
