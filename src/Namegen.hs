@@ -2,6 +2,8 @@
 
 import qualified Data.Map.Strict as M
 import qualified Data.List as L
+import System.Random
+import Data.Maybe
 
 mypath = "../namegen-data/personnames/Italian_male.txt"
 
@@ -11,7 +13,7 @@ data Prosecution = NextChar Char | NameEnd
 data Language = Language { firstLetter :: M.Map Char Float, transitions :: TransitionMap }
                 deriving Show
 
-type TransitionMap = M.Map Char (M.Map Prosecution Double)
+type TransitionMap = M.Map Char (M.Map Prosecution Float)
 type TransitionMapInt = M.Map Char (M.Map Prosecution Int)
 
 countTransitionsLetter :: TransitionMapInt -> (Char, Prosecution) -> TransitionMapInt
@@ -27,12 +29,11 @@ countTransitionsName tm name = let transitions = L.map (\i -> transition name i)
                                    tm' = foldl countTransitionsLetter tm transitions
                                in tm'
 
-convertSubTm :: M.Map Prosecution Int -> M.Map Prosecution Double
+convertSubTm :: M.Map Prosecution Int -> M.Map Prosecution Float
 convertSubTm subTm = let total :: Int = M.foldl (+) 0 subTm
-                         total' :: Double = fromIntegral total
+                         total' :: Float = fromIntegral total
                      in M.map (\i -> (fromIntegral i) / total') subTm
 
--- TODO divide by the total size of the subMap
 convertTm :: TransitionMapInt -> TransitionMap
 convertTm iTm = M.map convertSubTm iTm
 
@@ -51,3 +52,26 @@ loadSamples :: FilePath -> IO [String]
 loadSamples path = do content <- readFile path 
                       let ls = lines content
                       return ls
+
+getInitial :: Float -> Language -> Char
+getInitial f l = helper f (M.toAscList (firstLetter l))
+                 where helper f [] = error "?"
+                       helper f ((k,v):as) = if v>f then k else helper (f-v) as
+
+getProsecution :: Float -> Char -> Language -> Prosecution
+getProsecution f currChar l = helper f (M.toAscList transitionMap)
+                              where transitionMap = fromJust (M.lookup currChar (transitions l))
+                                    helper f [] = error "?"
+                                    helper f ((k,v):as) = if v>=f then k else helper (f-v) as
+
+generateName' :: [Float] -> Char -> Language -> String
+generateName' rseq currChar l = case prosecution of
+                                  NameEnd -> []
+                                  NextChar c -> c:(generateName' (tail rseq) c l)
+                                where prosecution = getProsecution (head rseq) currChar l
+
+generateName :: Language -> Int -> String
+generateName l seed = initial:(generateName' (tail rseq) initial l)
+                      where rg = mkStdGen seed
+                            rseq = randomRs (0.0,1.0) rg
+                            initial = getInitial (head rseq) l
